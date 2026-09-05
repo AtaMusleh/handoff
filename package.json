@@ -3,25 +3,15 @@
   "version": "1.0.0",
   "description": "Event-sourced task handoff system",
   "private": true,
-  "workspaces": [
-    "apps/web",
-    "apps/api",
-    "workers/handoff-brief",
-    "packages/*"
-  ],
+  "workspaces": ["apps/web", "apps/api", "workers/handoff-brief", "packages/*"],
   "scripts": {
-    "install": "npm install",
     "dev": "concurrently \"npm -w @handoff/api run dev\" \"npm -w @handoff/web run dev\"",
     "build": "npm run build --workspaces",
-    "test": "npm test --workspaces",
-    "db:migrate": "npm -w @handoff/api run migrate",
-    "db:seed": "npm -w @handoff/api run seed"
+    "test": "npm test --workspaces"
   },
   "devDependencies": {
     "concurrently": "^8.2.0",
     "typescript": "^5.0.0"
   },
-  "engines": {
-    "node": ">=18.0.0"
-  }
+  "engines": {"node": ">=18.0.0"}
 }
