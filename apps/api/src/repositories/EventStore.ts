@@ -240,6 +240,59 @@ function translatePgError(err: unknown, context: { entity: string; id: UUID }): 
 }
 
 // =============================================================================
+// Publication
+// =============================================================================
+
+/**
+ * An event as broadcast to subscribers, enriched with the routing information
+ * the realtime layer needs but `task_events` does not store on the row.
+ */
+export interface PublishedTaskEvent {
+  event: TaskEvent;
+  /** Owning project, for room routing. Read under the same lock as the append. */
+  projectId: UUID;
+  /**
+   * The task version this event produced.
+   *
+   * Equal to `sequence - 1` by construction: TaskCreated is sequence 1 and
+   * leaves the task at version 0, and every later event advances both by one.
+   * `replayEvents` relies on the same invariant.
+   */
+  version: number;
+}
+
+/** Receives events that have been durably committed. */
+export interface TaskEventPublisher {
+  publish(events: readonly PublishedTaskEvent[]): void;
+}
+
+/**
+ * Holds events until someone flushes them.
+ *
+ * Used by {@link inUnitOfWork} so that repositories enlisted in a caller's
+ * transaction do not broadcast work that a later ROLLBACK would undo: the
+ * buffer is drained only once COMMIT has returned.
+ */
+export class BufferingPublisher implements TaskEventPublisher {
+  private buffered: PublishedTaskEvent[] = [];
+
+  publish(events: readonly PublishedTaskEvent[]): void {
+    this.buffered.push(...events);
+  }
+
+  /** Discard anything buffered. Called before each transaction attempt. */
+  reset(): void {
+    this.buffered = [];
+  }
+
+  /** Hand everything buffered to `target` and clear. */
+  flushTo(target: TaskEventPublisher | undefined): void {
+    if (target && this.buffered.length > 0) target.publish(this.buffered);
+    this.buffered = [];
+  }
+}
+
+// =============================================================================
 // Transactions
 // =============================================================================
 
@@ -535,6 +588,20 @@ function applyEvent(state: Task, event: TaskEvent): Task {
 // EventStore
 // =============================================================================
 
+/** Internal result of an append: the row plus what publication needs. */
+interface AppendedEvent {
+  id: UUID;
+  sequence: number;
+  taskId: UUID;
+  projectId: UUID;
+  event: TaskEvent;
+}
+
+/** Project an {@link AppendedEvent} into the broadcast shape. */
+function toPublished(a: AppendedEvent): PublishedTaskEvent {
+  return { event: a.event, projectId: a.projectId, version: a.sequence - 1 };
+}
+
 /** What {@link EventStore.getTaskHistory} returns. */
 export interface TaskHistory {
   events: TaskEvent[];
@@ -548,11 +615,19 @@ export interface TaskHistory {
  * {@link EventStore.withClient} to enlist in a caller's transaction.
  */
 export class EventStore {
-  constructor(private readonly db: Queryable) {}
+  constructor(
+    private readonly db: Queryable,
+    /**
+     * Notified after events are durably committed. When this store is enlisted
+     * in someone else's transaction, {@link inUnitOfWork} passes a
+     * {@link BufferingPublisher} so nothing escapes before COMMIT.
+     */
+    private readonly publisher?: TaskEventPublisher,
+  ) {}
 
   /** A store bound to `client`, for use inside an open transaction. */
-  withClient(client: Queryable): EventStore {
-    return new EventStore(client);
+  withClient(client: Queryable, publisher?: TaskEventPublisher): EventStore {
+    return new EventStore(client, publisher ?? this.publisher);
   }
 
   /**
@@ -564,10 +639,12 @@ export class EventStore {
    * @throws {NotFoundError} if the task does not exist.
    */
   async append(event: NewTaskEvent): Promise<{ id: UUID; sequence: number }> {
-    const [appended] = await this.run((client) =>
-      appendAll(client, [event]),
-    );
-    return appended!;
+    const appended = await this.run((client) => appendAll(client, [event]));
+    // run() has committed by now (or handed off to a buffer that will only be
+    // drained post-COMMIT), so this can never announce a rolled-back event.
+    this.publisher?.publish(appended.map(toPublished));
+    const first = appended[0]!;
+    return { id: first.id, sequence: first.sequence };
   }
 
   /**
@@ -578,7 +655,9 @@ export class EventStore {
     events: readonly NewTaskEvent[],
   ): Promise<Array<{ id: UUID; sequence: number }>> {
     if (events.length === 0) return [];
-    return this.run((client) => appendAll(client, events));
+    const appended = await this.run((client) => appendAll(client, events));
+    this.publisher?.publish(appended.map(toPublished));
+    return appended.map((a) => ({ id: a.id, sequence: a.sequence }));
   }
 
   /** Full stream for a task, in sequence order. */
@@ -684,29 +763,38 @@ export class EventStore {
 async function appendAll(
   client: Queryable,
   events: readonly NewTaskEvent[],
-): Promise<Array<{ id: UUID; sequence: number }>> {
+): Promise<AppendedEvent[]> {
   // Lock in a deterministic order so two concurrent multi-task appends cannot
   // deadlock by grabbing the same rows in opposite orders.
   const taskIds = [...new Set(events.map((e) => e.taskId))].sort();
+  const projectByTask = new Map<UUID, UUID>();
   for (const taskId of taskIds) {
-    const { rows } = await client.query<{ id: string }>(
-      'SELECT id FROM tasks WHERE id = $1 FOR UPDATE',
+    // project_id comes back under the same lock, so the realtime layer can
+    // route without a second read that might see a different row.
+    const { rows } = await client.query<{ id: string; project_id: string }>(
+      'SELECT id, project_id FROM tasks WHERE id = $1 FOR UPDATE',
       [taskId],
     );
-    if (rows.length === 0) throw new NotFoundError('Task', taskId);
+    const row = rows[0];
+    if (!row) throw new NotFoundError('Task', taskId);
+    projectByTask.set(taskId, row.project_id);
   }
 
-  const appended: Array<{ id: UUID; sequence: number }> = [];
+  const appended: AppendedEvent[] = [];
   for (const event of events) {
     try {
-      const { rows } = await client.query<{ id: string; sequence: number | string }>(
+      const { rows } = await client.query<{
+        id: string;
+        sequence: number | string;
+        created_at: Date | string;
+      }>(
         `INSERT INTO task_events (task_id, type, actor_id, payload, sequence)
          SELECT $1::uuid, $2, $3::uuid, $4::jsonb,
                 COALESCE(
                   (SELECT MAX(sequence) FROM task_events WHERE task_id = $1::uuid),
                   0
                 ) + 1
-         RETURNING id, sequence`,
+         RETURNING id, sequence, created_at`,
         [event.taskId, event.type, event.actorId, JSON.stringify(event.payload)],
       );
       const row = rows[0];
@@ -715,7 +803,19 @@ async function appendAll(
           `Appending ${event.type} to task ${event.taskId} returned no row.`,
         );
       }
-      appended.push({ id: row.id, sequence: toInt(row.sequence) });
+      const sequence = toInt(row.sequence);
+      appended.push({
+        id: row.id,
+        sequence,
+        taskId: event.taskId,
+        projectId: projectByTask.get(event.taskId)!,
+        event: {
+          ...event,
+          id: row.id,
+          sequence,
+          createdAt: toISO(row.created_at),
+        } as TaskEvent,
+      });
     } catch (err) {
       if (err instanceof RepositoryError) throw err;
       translatePgError(err, { entity: 'TaskEvent', id: event.taskId });
@@ -749,13 +849,14 @@ export class TaskRepository {
   constructor(
     private readonly db: Queryable,
     events?: EventStore,
+    private readonly publisher?: TaskEventPublisher,
   ) {
-    this.events = events ?? new EventStore(db);
+    this.events = events ?? new EventStore(db, publisher);
   }
 
   /** A repository bound to `client`, for use inside an open transaction. */
-  withClient(client: Queryable): TaskRepository {
-    return new TaskRepository(client);
+  withClient(client: Queryable, publisher?: TaskEventPublisher): TaskRepository {
+    return new TaskRepository(client, undefined, publisher ?? this.publisher);
   }
 
   /** The task, or null when it does not exist. */
@@ -832,19 +933,29 @@ export class TaskRepository {
    * the caller can keep working without a re-read.
    */
   async saveAndReturn(aggregate: TaskAggregate): Promise<TaskAggregate> {
-    const run = async (client: Queryable): Promise<TaskAggregate> => {
+    const run = async (
+      client: Queryable,
+    ): Promise<{ saved: TaskAggregate; appended: AppendedEvent[] }> => {
       if (aggregate.isNew) {
         await this.insert(client, aggregate);
       } else {
         await this.update(client, aggregate);
       }
-      if (aggregate.hasPendingEvents) {
-        await appendAll(client, aggregate.pendingEvents);
-      }
-      return aggregate.markPersisted();
+      const appended = aggregate.hasPendingEvents
+        ? await appendAll(client, aggregate.pendingEvents)
+        : [];
+      return { saved: aggregate.markPersisted(), appended };
     };
 
-    return isPool(this.db) ? withTransaction(this.db, run) : run(this.db);
+    const { saved, appended } = isPool(this.db)
+      ? await withTransaction(this.db, run)
+      : await run(this.db);
+
+    // Pool-owned path: withTransaction has returned, so COMMIT succeeded.
+    // Enlisted path: this is a BufferingPublisher that inUnitOfWork drains
+    // after its own COMMIT. Either way nothing escapes before it is durable.
+    this.publisher?.publish(appended.map(toPublished));
+    return saved;
   }
 
   private async insert(client: Queryable, aggregate: TaskAggregate): Promise<void> {
@@ -1115,18 +1226,28 @@ export interface UnitOfWork {
 export async function inUnitOfWork<T>(
   pool: PoolLike,
   fn: (uow: UnitOfWork) => Promise<T>,
-  options?: TransactionOptions,
+  options?: TransactionOptions & { publisher?: TaskEventPublisher },
 ): Promise<T> {
-  return withTransaction(
+  const buffer = new BufferingPublisher();
+
+  const result = await withTransaction(
     pool,
-    (client) =>
-      fn({
+    (client) => {
+      // withTransaction may retry the callback; start each attempt with an
+      // empty buffer so a retried append is not published twice.
+      buffer.reset();
+      return fn({
         client,
-        events: new EventStore(client),
-        tasks: new TaskRepository(client),
+        events: new EventStore(client, buffer),
+        tasks: new TaskRepository(client, undefined, buffer),
         handoffs: new HandoffRepository(client),
         briefs: new HandoffBriefRepository(client),
-      }),
+      });
+    },
     options,
   );
+
+  // COMMIT has returned; only now is it safe to tell the world.
+  buffer.flushTo(options?.publisher);
+  return result;
 }
