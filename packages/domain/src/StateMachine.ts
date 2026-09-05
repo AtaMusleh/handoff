@@ -784,6 +784,14 @@ export interface InitiateHandoffOptions {
   createdAt?: ISODateTime;
 }
 
+/** Options accepted by {@link HandoffAggregate.accept} and `decline`. */
+export interface ResolveHandoffOptions {
+  /** The recipient's note, e.g. why they declined. */
+  note?: string | null;
+  /** Overrides `now()`; useful for deterministic tests. */
+  at?: ISODateTime;
+}
+
 /**
  * A proposed transfer of task ownership.
  *
@@ -827,6 +835,7 @@ export class HandoffAggregate {
       toUserId,
       reason: isNonBlank(reason) ? reason.trim() : null,
       status: HandoffStatus.PENDING,
+      resolutionNote: null,
       resolvedAt: null,
       createdAt: options.createdAt ?? nowISO(),
     });
@@ -866,30 +875,33 @@ export class HandoffAggregate {
    * Recipient accepts. On success the handoff is ACCEPTED; apply the ownership
    * change with `TaskAggregate.from(task).assign(toUserId, actor)`.
    */
-  accept(toUserId: UUID, at: ISODateTime = nowISO()): HandoffActionResult {
-    const rejection = this.checkResolvable(toUserId, 'accept');
-    if (rejection) return rejection;
-
-    this.current = {
-      ...this.current,
-      status: HandoffStatus.ACCEPTED,
-      resolvedAt: at,
-    };
-    return { success: true };
+  accept(toUserId: UUID, options: ResolveHandoffOptions = {}): HandoffActionResult {
+    return this.resolve(toUserId, HandoffStatus.ACCEPTED, 'accept', options);
   }
 
   /**
    * Recipient declines. The task stays TRANSFERRED with its previous owner;
    * the sender is expected to reassign or propose a new handoff.
    */
-  decline(toUserId: UUID, at: ISODateTime = nowISO()): HandoffActionResult {
-    const rejection = this.checkResolvable(toUserId, 'decline');
+  decline(toUserId: UUID, options: ResolveHandoffOptions = {}): HandoffActionResult {
+    return this.resolve(toUserId, HandoffStatus.DECLINED, 'decline', options);
+  }
+
+  /** Shared accept/decline body: guard, then stamp the outcome. */
+  private resolve(
+    toUserId: UUID,
+    status: HandoffStatus.ACCEPTED | HandoffStatus.DECLINED,
+    action: 'accept' | 'decline',
+    options: ResolveHandoffOptions,
+  ): HandoffActionResult {
+    const rejection = this.checkResolvable(toUserId, action);
     if (rejection) return rejection;
 
     this.current = {
       ...this.current,
-      status: HandoffStatus.DECLINED,
-      resolvedAt: at,
+      status,
+      resolutionNote: isNonBlank(options.note) ? options.note.trim() : null,
+      resolvedAt: options.at ?? nowISO(),
     };
     return { success: true };
   }

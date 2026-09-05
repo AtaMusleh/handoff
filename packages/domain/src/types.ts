@@ -144,6 +144,8 @@ export interface Handoff {
   reason: string | null;
   /** Proposal lifecycle. Task ownership moves only on ACCEPTED. */
   status: HandoffStatus;
+  /** The recipient's note when accepting or declining; null while PENDING. */
+  resolutionNote: string | null;
   /** When the recipient accepted or declined; null while PENDING. */
   resolvedAt: ISODateTime | null;
   createdAt: ISODateTime;

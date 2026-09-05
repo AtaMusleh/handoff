@@ -25,6 +25,8 @@ import {
   isHandoffStatus,
   isTaskStatus,
   type Handoff,
+  type HandoffBrief,
+  type HandoffBriefContent,
   type ISODateTime,
   type JsonObject,
   type NewTaskEvent,
@@ -331,6 +333,7 @@ interface HandoffRow {
   to_user_id: string;
   reason: string | null;
   status: string;
+  resolution_note: string | null;
   resolved_at: Date | string | null;
   created_at: Date | string;
 }
@@ -412,6 +415,7 @@ function mapHandoff(row: HandoffRow): Handoff {
     toUserId: row.to_user_id,
     reason: row.reason,
     status: row.status,
+    resolutionNote: row.resolution_note,
     resolvedAt: toISOOrNull(row.resolved_at),
     createdAt: toISO(row.created_at),
   };
@@ -420,7 +424,7 @@ function mapHandoff(row: HandoffRow): Handoff {
 const TASK_COLUMNS = 'id, project_id, title, status, owner_id, version, created_at';
 const EVENT_COLUMNS = 'id, task_id, type, actor_id, payload, sequence, created_at';
 const HANDOFF_COLUMNS =
-  'id, task_id, from_user_id, to_user_id, reason, status, resolved_at, created_at';
+  'id, task_id, from_user_id, to_user_id, reason, status, resolution_note, resolved_at, created_at';
 
 // =============================================================================
 // Event replay
@@ -600,6 +604,35 @@ export class EventStore {
       [taskId, afterSequence],
     );
     return rows.map(mapEvent);
+  }
+
+  /**
+   * One page of a task's stream, in sequence order, starting after
+   * `afterSequence`. Backs cursor pagination on the history endpoint.
+   *
+   * Fetches `limit + 1` rows internally to report `hasMore` without a
+   * second COUNT query.
+   */
+  async getEventsPage(
+    taskId: UUID,
+    afterSequence: number,
+    limit: number,
+  ): Promise<{ events: TaskEvent[]; hasMore: boolean; nextCursor: number | null }> {
+    const safeLimit = normalizeLimit(limit, 200);
+    const { rows } = await this.db.query<TaskEventRow>(
+      `SELECT ${EVENT_COLUMNS} FROM task_events
+        WHERE task_id = $1 AND sequence > $2
+        ORDER BY sequence ASC
+        LIMIT $3`,
+      [taskId, afterSequence, safeLimit + 1],
+    );
+    const hasMore = rows.length > safeLimit;
+    const events = rows.slice(0, safeLimit).map(mapEvent);
+    return {
+      events,
+      hasMore,
+      nextCursor: hasMore ? (events[events.length - 1]?.sequence ?? null) : null,
+    };
   }
 
   /** Most recent events of one type across all tasks, newest first. */
@@ -963,12 +996,13 @@ export class HandoffRepository {
     try {
       result = await this.db.query<{ id: string }>(
         `INSERT INTO handoffs
-             (id, task_id, from_user_id, to_user_id, reason, status, resolved_at, created_at)
-         VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6, $7::timestamptz, $8::timestamptz)
+             (id, task_id, from_user_id, to_user_id, reason, status, resolution_note, resolved_at, created_at)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6, $7, $8::timestamptz, $9::timestamptz)
          ON CONFLICT (id) DO UPDATE
              SET status = EXCLUDED.status,
+                 resolution_note = EXCLUDED.resolution_note,
                  resolved_at = EXCLUDED.resolved_at
-           WHERE handoffs.status = $9
+           WHERE handoffs.status = $10
          RETURNING id`,
         [
           h.id,
@@ -977,6 +1011,7 @@ export class HandoffRepository {
           h.toUserId,
           h.reason,
           h.status,
+          h.resolutionNote,
           h.resolvedAt,
           h.createdAt,
           HandoffStatus.PENDING,
@@ -1005,6 +1040,55 @@ export class HandoffRepository {
 }
 
 // =============================================================================
+// HandoffBriefRepository
+// =============================================================================
+
+interface HandoffBriefRow {
+  id: string;
+  handoff_id: string;
+  content: unknown;
+  source_event_ids: unknown;
+  model: string;
+  created_at: Date | string;
+}
+
+function mapBrief(row: HandoffBriefRow): HandoffBrief {
+  const ids = row.source_event_ids;
+  return {
+    id: row.id,
+    handoffId: row.handoff_id,
+    content: toJsonObject(row.content) as unknown as HandoffBriefContent,
+    sourceEventIds: Array.isArray(ids) ? (ids as UUID[]) : [],
+    model: row.model,
+    createdAt: toISO(row.created_at),
+  };
+}
+
+const BRIEF_COLUMNS = 'id, handoff_id, content, source_event_ids, model, created_at';
+
+/**
+ * Reads the AI-generated brief attached to a handoff. Briefs are written by the
+ * `handoff-brief` worker, so this layer is read-only.
+ */
+export class HandoffBriefRepository {
+  constructor(private readonly db: Queryable) {}
+
+  withClient(client: Queryable): HandoffBriefRepository {
+    return new HandoffBriefRepository(client);
+  }
+
+  /** The brief for a handoff, or null when the worker has not produced one yet. */
+  async getByHandoffId(handoffId: UUID): Promise<HandoffBrief | null> {
+    const { rows } = await this.db.query<HandoffBriefRow>(
+      `SELECT ${BRIEF_COLUMNS} FROM handoff_briefs WHERE handoff_id = $1`,
+      [handoffId],
+    );
+    const row = rows[0];
+    return row ? mapBrief(row) : null;
+  }
+}
+
+// =============================================================================
 // Unit of work
 // =============================================================================
 
@@ -1014,6 +1098,7 @@ export interface UnitOfWork {
   events: EventStore;
   tasks: TaskRepository;
   handoffs: HandoffRepository;
+  briefs: HandoffBriefRepository;
 }
 
 /**
@@ -1040,6 +1125,7 @@ export async function inUnitOfWork<T>(
         events: new EventStore(client),
         tasks: new TaskRepository(client),
         handoffs: new HandoffRepository(client),
+        briefs: new HandoffBriefRepository(client),
       }),
     options,
   );

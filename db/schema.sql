@@ -214,8 +214,9 @@ CREATE TABLE handoffs (
     from_user_id UUID,
     to_user_id   UUID NOT NULL,
     reason       TEXT,
-    status       VARCHAR(16) NOT NULL DEFAULT 'PENDING',
-    resolved_at  TIMESTAMP WITH TIME ZONE,
+    status          VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+    resolution_note TEXT,
+    resolved_at     TIMESTAMP WITH TIME ZONE,
     created_at   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
 
     CONSTRAINT handoffs_task_id_fkey
