@@ -1,9 +1,14 @@
-﻿{
+{
   "name": "handoff",
   "version": "1.0.0",
   "description": "Event-sourced task handoff system",
   "private": true,
-  "workspaces": ["apps/web", "apps/api", "workers/handoff-brief", "packages/*"],
+  "workspaces": [
+    "apps/web",
+    "apps/api",
+    "workers/handoff-brief",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "concurrently \"npm -w @handoff/api run dev\" \"npm -w @handoff/web run dev\"",
     "build": "npm run build --workspaces",
@@ -13,5 +18,12 @@
     "concurrently": "^8.2.0",
     "typescript": "^5.0.0"
   },
-  "engines": {"node": ">=18.0.0"}
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "overrides": {
+    "@tailwindcss/oxide": "4.0.0",
+    "@tailwindcss/node": "4.0.0",
+    "@tailwindcss/postcss": "4.0.0"
+  }
 }

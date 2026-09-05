@@ -1,4 +1,4 @@
-﻿# 🚀 Handoff
+# 🚀 Handoff
 
 Event-sourced task transfer system with realtime updates and AI-generated context briefs.
 

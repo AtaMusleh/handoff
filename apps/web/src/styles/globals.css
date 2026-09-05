@@ -1,0 +1,280 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens.
+ *
+ * Colours are declared as CSS variables rather than Tailwind utilities so that
+ * dark mode is a single variable swap: no `dark:` variant on every element, and
+ * no flash of the wrong palette when the theme is restored on load.
+ *
+ * Three theme states are supported, matching how a viewer's preference actually
+ * works: an explicit choice stamps `data-theme` on <html>, and the default
+ * "system" setting leaves it unset so `prefers-color-scheme` decides.
+ */
+
+@theme {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+
+  --animate-fade-in: fade-in 180ms ease-out;
+  --animate-slide-up: slide-up 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-slide-in: slide-in 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* --- light (default) ------------------------------------------------------ */
+:root {
+  color-scheme: light;
+
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f1f3f5;
+  --border: #e2e5e9;
+  --border-strong: #cbd1d8;
+
+  --text: #14181d;
+  --text-muted: #5c6672;
+  --text-subtle: #8a939e;
+
+  --accent: #3b5bdb;
+  --accent-fg: #ffffff;
+  --accent-soft: #e7ecfd;
+
+  --ring: #3b5bdb;
+  --danger: #c92a2a;
+  --danger-soft: #ffe9e9;
+
+  /* Status palette. Each pairs a tinted ground with readable text. */
+  --status-backlog-bg: #eceef1;
+  --status-backlog-fg: #4b5563;
+  --status-assigned-bg: #e3ecfd;
+  --status-assigned-fg: #1e478e;
+  --status-progress-bg: #fdf1d6;
+  --status-progress-fg: #8a5a06;
+  --status-blocked-bg: #fde4e4;
+  --status-blocked-fg: #a52020;
+  --status-completed-bg: #dff3e6;
+  --status-completed-fg: #1c6b3d;
+  --status-transferred-bg: #ece5fb;
+  --status-transferred-fg: #5a3ba8;
+}
+
+/* --- dark ------------------------------------------------------------------ */
+/* System preference, unless the user explicitly chose light. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --bg: #0e1116;
+    --surface: #161a21;
+    --surface-2: #1d222b;
+    --border: #272d37;
+    --border-strong: #39414e;
+
+    --text: #e8ebef;
+    --text-muted: #9aa4b2;
+    --text-subtle: #6b7583;
+
+    --accent: #7c93f5;
+    --accent-fg: #0e1116;
+    --accent-soft: #1e2740;
+
+    --ring: #7c93f5;
+    --danger: #ff8787;
+    --danger-soft: #3a1e1e;
+
+    --status-backlog-bg: #262b33;
+    --status-backlog-fg: #b3bcc7;
+    --status-assigned-bg: #1c2b47;
+    --status-assigned-fg: #9dbcf5;
+    --status-progress-bg: #3a2f14;
+    --status-progress-fg: #e8c473;
+    --status-blocked-bg: #40201f;
+    --status-blocked-fg: #f5a3a3;
+    --status-completed-bg: #16351f;
+    --status-completed-fg: #86d9a5;
+    --status-transferred-bg: #2a2144;
+    --status-transferred-fg: #bda6f0;
+  }
+}
+
+/* Explicit choice always wins over the media query. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #0e1116;
+  --surface: #161a21;
+  --surface-2: #1d222b;
+  --border: #272d37;
+  --border-strong: #39414e;
+
+  --text: #e8ebef;
+  --text-muted: #9aa4b2;
+  --text-subtle: #6b7583;
+
+  --accent: #7c93f5;
+  --accent-fg: #0e1116;
+  --accent-soft: #1e2740;
+
+  --ring: #7c93f5;
+  --danger: #ff8787;
+  --danger-soft: #3a1e1e;
+
+  --status-backlog-bg: #262b33;
+  --status-backlog-fg: #b3bcc7;
+  --status-assigned-bg: #1c2b47;
+  --status-assigned-fg: #9dbcf5;
+  --status-progress-bg: #3a2f14;
+  --status-progress-fg: #e8c473;
+  --status-blocked-bg: #40201f;
+  --status-blocked-fg: #f5a3a3;
+  --status-completed-bg: #16351f;
+  --status-completed-fg: #86d9a5;
+  --status-transferred-bg: #2a2144;
+  --status-transferred-fg: #bda6f0;
+}
+
+/* --- base ------------------------------------------------------------------ */
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* --- animations ------------------------------------------------------------ */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-fade-in {
+  animation: var(--animate-fade-in);
+}
+.animate-slide-up {
+  animation: var(--animate-slide-up);
+}
+.animate-slide-in {
+  animation: var(--animate-slide-in);
+}
+
+/* Respect a reduced-motion preference: keep the state change, drop the motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* --- component primitives --------------------------------------------------- */
+
+@layer components {
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    padding: 0.5rem 0.875rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      opacity 120ms ease;
+  }
+  .btn:hover:not(:disabled) {
+    background: var(--surface-2);
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+  }
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.08);
+    background: var(--accent);
+  }
+
+  .btn-danger {
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: var(--danger-soft);
+  }
+
+  .input {
+    width: 100%;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+  }
+  .input::placeholder {
+    color: var(--text-subtle);
+  }
+}
