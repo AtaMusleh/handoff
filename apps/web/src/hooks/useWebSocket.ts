@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import type { EventType } from '@handoff/domain';
 import type { TaskEventDto } from '@/lib/schemas';
+import { getAuthToken } from '@/lib/session';
 
 export type ChannelKind = 'project' | 'task' | 'user';
 
@@ -48,7 +49,7 @@ export interface RealtimeNotification {
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'error';
 
 export interface UseWebSocketOptions {
-  /** Identifies the connection to the gateway's authenticator. */
+  /** Used for room subscriptions; the gateway authenticates the token, not this. */
   userId: string;
   subscriptions: Subscription[];
   /** Defaults to `NEXT_PUBLIC_WS_URL`, else the API origin. */
@@ -124,7 +125,8 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketResult {
 
     setState('connecting');
     const socket: Socket = io(url, {
-      auth: { userId },
+      // The gateway verifies this with the same secret as the HTTP API.
+      auth: { token: getAuthToken() ?? '', userId },
       transports: ['websocket'],
       withCredentials: true,
       reconnection: true,

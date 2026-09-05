@@ -9,6 +9,7 @@
 
 import { z } from 'zod';
 import type { TaskStatus } from '@handoff/domain';
+import { getAuthToken } from './session';
 import {
   acceptResponse,
   apiErrorSchema,
@@ -65,26 +66,27 @@ export class ApiError extends Error {
 
 export interface RequestOptions {
   signal?: AbortSignal;
-  /** Identifies the caller until real auth is wired up. See the note below. */
+  /**
+   * Overrides the stored bearer token. Rarely needed; the token from
+   * `lib/session` is used by default.
+   */
+  token?: string;
+  /**
+   * Retained so existing call sites compile. It no longer authenticates
+   * anything - the API verifies a JWT and ignores this.
+   *
+   * @deprecated Pass a token, or rely on the stored session.
+   */
   actorId?: string;
 }
-
-/**
- * The API reads `req.user`, populated by auth middleware that is not part of
- * this codebase yet. Until it is, the client forwards the acting user in a
- * header so the two halves can be run together.
- *
- * Replace this with a real credential (cookie or Authorization header) before
- * anything reaches production — a client-supplied user id is not authentication.
- */
-const ACTOR_HEADER = 'x-actor-id';
 
 async function request<T extends z.ZodType>(
   path: string,
   schema: T,
   init: RequestInit & RequestOptions = {},
 ): Promise<z.infer<T>> {
-  const { actorId, signal, ...rest } = init;
+  const { actorId: _ignored, token, signal, ...rest } = init;
+  const bearer = token ?? getAuthToken();
 
   const res = await fetch(`${API_BASE}${path}`, {
     ...rest,
@@ -93,7 +95,7 @@ async function request<T extends z.ZodType>(
     headers: {
       accept: 'application/json',
       ...(rest.body ? { 'content-type': 'application/json' } : {}),
-      ...(actorId ? { [ACTOR_HEADER]: actorId } : {}),
+      ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
       ...rest.headers,
     },
   });
@@ -330,4 +332,50 @@ export async function listUsers(
   const q = new URLSearchParams({ q: query });
   const { data } = await request(`/users?${q}`, userListResponse, opts);
   return data;
+}
+
+// -----------------------------------------------------------------------------
+// Development login
+// -----------------------------------------------------------------------------
+
+const devLoginResponse = z.object({
+  data: z.object({
+    token: z.string(),
+    user: z.object({ id: z.string(), email: z.string(), displayName: z.string() }),
+  }),
+  meta: z.object({ serverTime: z.string() }).catchall(z.unknown()),
+});
+
+export type DevLoginResult = z.infer<typeof devLoginResponse>['data'];
+
+/**
+ * Exchange nothing for a development session.
+ *
+ * Backed by `POST /auth/dev-login`, which the API serves only outside
+ * production and which 404s otherwise. Not a login flow - a stand-in until one
+ * exists.
+ */
+export async function devLogin(
+  body: { id?: string; email?: string; displayName?: string } = {},
+): Promise<DevLoginResult> {
+  const res = await fetch(`${API_BASE}/auth/dev-login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new ApiError(
+      res.status,
+      res.status === 404 ? 'DEV_LOGIN_DISABLED' : 'UNKNOWN',
+      res.status === 404
+        ? 'Development login is not available on this server.'
+        : `Development login failed (${res.status}).`,
+    );
+  }
+  const parsed = devLoginResponse.safeParse(JSON.parse(text));
+  if (!parsed.success) {
+    throw new ApiError(res.status, 'SCHEMA_MISMATCH', 'Unexpected dev-login response.');
+  }
+  return parsed.data.data;
 }

@@ -23,6 +23,7 @@ import {
   type TaskEvent,
   type UUID,
 } from '@handoff/domain';
+import { AuthError } from '../middleware/auth';
 import {
   ConcurrencyError,
   ConstraintViolationError,
@@ -35,20 +36,16 @@ import {
 // Authenticated actor
 // =============================================================================
 
-/** The caller, as established by upstream auth middleware. */
+/**
+ * The caller as the domain layer wants them: an id plus an admin flag.
+ *
+ * Distinct from `SessionUser` in `middleware/auth.ts`, which is the full
+ * verified session. `requireActor` narrows one to the other so route handlers
+ * and domain aggregates do not have to care about tokens, roles, or emails.
+ */
 export interface AuthenticatedUser {
   userId: UUID;
   isAdmin?: boolean;
-}
-
-declare global {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
-  namespace Express {
-    interface Request {
-      /** Populated by auth middleware; absent on unauthenticated requests. */
-      user?: AuthenticatedUser;
-    }
-  }
 }
 
 /** Raised when a route needs an actor and none was authenticated. */
@@ -70,8 +67,8 @@ export class UnauthenticatedError extends Error {
  */
 export function requireActor(req: Request): AuthenticatedUser {
   const user = req.user;
-  if (!user?.userId) throw new UnauthenticatedError();
-  return user;
+  if (!user?.id) throw new UnauthenticatedError();
+  return { userId: user.id, isAdmin: user.role === 'admin' };
 }
 
 // =============================================================================
@@ -244,6 +241,24 @@ export function translateError(err: unknown): Translated {
       code: ApiErrorCode.UNAUTHENTICATED,
       message: err.message,
       isServerFault: false,
+    };
+  }
+
+  // Errors raised by middleware/auth.ts carry their own status and code.
+  if (err instanceof AuthError) {
+    return {
+      status: err.status,
+      code:
+        err.status === 403
+          ? ApiErrorCode.FORBIDDEN
+          : err.status >= 500
+            ? ApiErrorCode.INTERNAL_ERROR
+            : ApiErrorCode.UNAUTHENTICATED,
+      // A misconfiguration message can name environment variables, so it is
+      // logged rather than returned.
+      message: err.status >= 500 ? 'The request could not be completed.' : err.message,
+      details: err.status >= 500 ? undefined : { reason: err.code },
+      isServerFault: err.status >= 500,
     };
   }
 

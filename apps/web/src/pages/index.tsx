@@ -8,10 +8,15 @@ import { Avatar } from '@/components/Avatar';
 import { Modal } from '@/components/Modal';
 import { useToast } from '@/components/Toast';
 import { useWebSocket, type Subscription } from '@/hooks/useWebSocket';
-import { ApiError, createTask, listTasks } from '@/lib/api';
+import { ApiError, createTask, devLogin, listTasks } from '@/lib/api';
 import type { TaskResponse } from '@/lib/schemas';
 import { formatDate, formatRelative } from '@/lib/format';
-import { getCurrentProjectId, getCurrentUserId, setCurrentUserId } from '@/lib/session';
+import {
+  getCurrentProjectId,
+  getCurrentUserId,
+  setAuthToken,
+  setCurrentUserId,
+} from '@/lib/session';
 
 /** Board column order. Terminal states sit last. */
 const COLUMNS: TaskStatus[] = [
@@ -21,6 +26,13 @@ const COLUMNS: TaskStatus[] = [
   TaskStatus.BLOCKED,
   TaskStatus.COMPLETED,
 ];
+
+/** A deadline in the past on work that is not finished. */
+function isOverdue(task: TaskResponse): boolean {
+  if (!task.dueDate) return false;
+  if (task.status === TaskStatus.COMPLETED || task.status === TaskStatus.TRANSFERRED) return false;
+  return Date.parse(task.dueDate) < Date.now();
+}
 
 function TaskCard({ task }: { task: TaskResponse }) {
   return (
@@ -38,18 +50,26 @@ function TaskCard({ task }: { task: TaskResponse }) {
         <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
           {task.ownerId ? 'Owned' : 'Unassigned'}
         </span>
-        {/*
-          The schema has no due date, so the card shows when the task was
-          created. See the note in the README about adding `tasks.due_date`.
-        */}
-        <time
-          className="ml-auto text-xs"
-          style={{ color: 'var(--text-subtle)' }}
-          dateTime={task.createdAt}
-          title={`Created ${formatRelative(task.createdAt)}`}
-        >
-          {formatDate(task.createdAt)}
-        </time>
+        {/* Due date when there is one, otherwise the creation date. */}
+        {task.dueDate ? (
+          <time
+            className="ml-auto text-xs font-medium"
+            style={{ color: isOverdue(task) ? 'var(--danger)' : 'var(--text-muted)' }}
+            dateTime={task.dueDate}
+            title={`Due ${formatRelative(task.dueDate)}`}
+          >
+            Due {formatDate(task.dueDate)}
+          </time>
+        ) : (
+          <time
+            className="ml-auto text-xs"
+            style={{ color: 'var(--text-subtle)' }}
+            dateTime={task.createdAt}
+            title={`Created ${formatRelative(task.createdAt)}`}
+          >
+            {formatDate(task.createdAt)}
+          </time>
+        )}
       </div>
     </Link>
   );
@@ -414,36 +434,74 @@ export default function DashboardPage() {
 }
 
 /**
- * Development identity prompt.
+ * Development sign-in.
  *
- * Stands in for a sign-in screen. See `lib/session.ts` — this is not
- * authentication and must be replaced before deployment.
+ * Calls `POST /auth/dev-login`, which the API serves only outside production,
+ * and stores the returned JWT. This is a stand-in for a real sign-in screen -
+ * the server hands a session to anyone who asks.
  */
 function IdentityPrompt({ onSet }: { onSet: (id: string) => void }) {
   const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const login = async (id?: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const session = await devLogin(id ? { id } : {});
+      setAuthToken(session.token);
+      onSet(session.user.id);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not sign in.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="card mx-auto mt-12 max-w-md p-6">
-      <h1 className="text-lg font-semibold">Who are you?</h1>
+      <h1 className="text-lg font-semibold">Sign in</h1>
       <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-        Authentication is not wired up yet. Enter a user id to browse as that person.
+        Development sign-in. The server issues a session to anyone who asks, so this
+        works only when the API is not running in production.
+      </p>
+
+      <button
+        type="button"
+        className="btn btn-primary mt-4 w-full"
+        disabled={busy}
+        onClick={() => void login()}
+      >
+        {busy ? 'Signing in…' : 'Continue as Ata Musleh'}
+      </button>
+
+      <p className="mt-4 text-xs" style={{ color: 'var(--text-subtle)' }}>
+        Or sign in as a seeded user by id:
       </p>
       <input
-        className="input mt-4 font-mono text-xs"
+        className="input mt-1 font-mono text-xs"
         placeholder="00000000-0000-0000-0000-000000000000"
         value={value}
         onChange={(e) => setValue(e.target.value.trim())}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && value) onSet(value);
+          if (e.key === 'Enter' && value) void login(value);
         }}
       />
       <button
         type="button"
-        className="btn btn-primary mt-3 w-full"
-        disabled={!value}
-        onClick={() => onSet(value)}
+        className="btn mt-2 w-full"
+        disabled={!value || busy}
+        onClick={() => void login(value)}
       >
-        Continue
+        Continue as that user
       </button>
+
+      {error && (
+        <p className="mt-3 text-sm" role="alert" style={{ color: 'var(--danger)' }}>
+          {error}
+        </p>
+      )}
     </div>
   );
 }
