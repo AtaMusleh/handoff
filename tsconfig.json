@@ -1,4 +1,4 @@
-﻿{
+{
   "compilerOptions": {
     "target": "ES2020",
     "module": "ESNext",
@@ -6,8 +6,12 @@
     "declaration": true,
     "sourceMap": true,
     "outDir": "./dist",
-    "rootDir": "./src",
     "moduleResolution": "node",
+    "baseUrl": ".",
+    "paths": {
+      "@handoff/domain": ["packages/domain/src/index.ts"],
+      "@handoff/domain/*": ["packages/domain/src/*"]
+    },
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "strict": true,
@@ -15,6 +19,11 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "packages/*/src/**/*",
+    "apps/*/src/**/*",
+    "workers/*/src/**/*",
+    "tests/**/*"
+  ],
+  "exclude": ["node_modules", "dist", "**/dist"]
 }

@@ -442,6 +442,12 @@ export const taskStateMachine = new StateMachine();
 // Task aggregate
 // =============================================================================
 
+/**
+ * {@link TaskAggregate.baseVersion} for an aggregate that has never been
+ * written to the database.
+ */
+export const NEVER_PERSISTED = -1;
+
 /** Options accepted by {@link TaskAggregate.create}. */
 export interface CreateTaskOptions {
   /** Pre-generated id, e.g. when the caller needs it before persisting. */
@@ -473,6 +479,15 @@ export class TaskAggregate {
     readonly state: Task,
     /** Events produced by this aggregate, in order, not yet persisted. */
     readonly pendingEvents: readonly NewTaskEvent[],
+    /**
+     * The `version` this aggregate was loaded at, and therefore the value an
+     * optimistic UPDATE must match. `-1` marks an aggregate that has never
+     * been persisted, so the repository INSERTs instead.
+     *
+     * Distinct from `state.version`, which has already advanced past the
+     * database for every pending operation.
+     */
+    readonly baseVersion: number,
     private readonly machine: StateMachine,
   ) {}
 
@@ -513,7 +528,7 @@ export class TaskAggregate {
       },
     };
 
-    return new TaskAggregate(state, [event], machine);
+    return new TaskAggregate(state, [event], NEVER_PERSISTED, machine);
   }
 
   /** Rehydrate from a persisted row. Starts with no pending events. */
@@ -521,7 +536,7 @@ export class TaskAggregate {
     task: Task,
     machine: StateMachine = taskStateMachine,
   ): TaskAggregate {
-    return new TaskAggregate({ ...task }, [], machine);
+    return new TaskAggregate({ ...task }, [], task.version, machine);
   }
 
   // --- queries -------------------------------------------------------------
@@ -544,9 +559,28 @@ export class TaskAggregate {
     return isTerminalStatus(this.state.status);
   }
 
+  /** True until the aggregate has been written to the database once. */
+  get isNew(): boolean {
+    return this.baseVersion === NEVER_PERSISTED;
+  }
+
+  /** True when there is unpersisted work. */
+  get hasPendingEvents(): boolean {
+    return this.pendingEvents.length > 0;
+  }
+
   /** Plain `Task` snapshot, for serialization and persistence. */
   toJSON(): Task {
     return { ...this.state };
+  }
+
+  /**
+   * The aggregate as it exists after a successful save: pending events dropped
+   * and `baseVersion` advanced to the persisted version. Repositories return
+   * this so callers can keep operating without a re-read.
+   */
+  markPersisted(): TaskAggregate {
+    return TaskAggregate.from(this.state, this.machine);
   }
 
   // --- operations ----------------------------------------------------------
@@ -734,6 +768,7 @@ export class TaskAggregate {
     return new TaskAggregate(
       nextState,
       [...this.pendingEvents, event],
+      this.baseVersion,
       this.machine,
     );
   }
