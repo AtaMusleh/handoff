@@ -20,6 +20,7 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import jwt, { type SignOptions } from 'jsonwebtoken';
 
 import type { UUID } from '@handoff/domain';
+import { DEV_ACCOUNT } from '../db/ids';
 import type { Queryable } from '../repositories/EventStore';
 
 // =============================================================================
@@ -555,13 +556,18 @@ export function requireProjectAccess(
 // Development login
 // =============================================================================
 
-/** The fixture account `POST /auth/dev-login` issues a token for. */
+/**
+ * The fixture account `POST /auth/dev-login` issues a token for.
+ *
+ * The id comes from `db/ids.ts`, the same derivation the seed uses, so this is
+ * the id of a row that actually exists after `db:seed` — owning two projects,
+ * three tasks, and a pending handoff. Previously it was a hand-written UUID
+ * matching nothing, so signing in produced an empty dashboard.
+ */
 export const DEV_USER: SessionUser = {
-  // Deterministic so the same account is addressed across restarts. Matches the
-  // UUID v5 scheme the database seed uses.
-  id: 'd0f2b1a4-3c6e-5f8a-9b0c-1d2e3f4a5b6c',
-  email: 'atamusleh3@gmail.com',
-  displayName: 'Ata Musleh',
+  id: DEV_ACCOUNT.id,
+  email: DEV_ACCOUNT.email,
+  displayName: DEV_ACCOUNT.displayName,
   role: 'admin',
 };
 

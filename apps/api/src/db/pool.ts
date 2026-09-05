@@ -74,7 +74,7 @@ export function createPool(options: CreatePoolOptions = {}): Pool {
     max: Number.isInteger(max) && max > 0 ? max : 10,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
-    ...(needsTls(connectionString) ? { ssl: { rejectUnauthorized: true } } : {}),
+    ...tlsFor(connectionString),
     ...options.overrides,
   });
 
@@ -92,13 +92,29 @@ export function createScriptPool(connectionString?: string): Pool {
   return createPool({ connectionString, max: 1 });
 }
 
-function needsTls(connectionString: string): boolean {
-  if (/\bsslmode=disable\b/.test(connectionString)) return false;
-  if (/\bsslmode=(require|verify-ca|verify-full)\b/.test(connectionString)) return true;
+/**
+ * TLS settings derived from `sslmode`, falling back to the host.
+ *
+ * `sslmode=no-verify` encrypts the connection but skips certificate
+ * validation. Managed providers that terminate TLS with a self-signed chain —
+ * Supabase's pooler among them — otherwise fail with
+ * `SELF_SIGNED_CERT_IN_CHAIN`. It is a development convenience: it stops
+ * eavesdropping but not an active man-in-the-middle, so production should use
+ * `verify-full` with the provider's CA.
+ */
+function tlsFor(connectionString: string): { ssl?: PoolConfig['ssl'] } {
+  if (/\bsslmode=disable\b/.test(connectionString)) return {};
+  if (/\bsslmode=no-verify\b/.test(connectionString)) {
+    return { ssl: { rejectUnauthorized: false } };
+  }
+  if (/\bsslmode=(require|verify-ca|verify-full)\b/.test(connectionString)) {
+    return { ssl: { rejectUnauthorized: true } };
+  }
   try {
     const host = new URL(connectionString).hostname;
-    return host !== 'localhost' && host !== '127.0.0.1' && host !== '::1';
+    const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+    return isLocal ? {} : { ssl: { rejectUnauthorized: true } };
   } catch {
-    return false;
+    return {};
   }
 }

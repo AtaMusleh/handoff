@@ -10,61 +10,21 @@
  * quietly scribble over real data.
  */
 
-import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Pool, PoolClient } from 'pg';
 
 import { EventType, HandoffStatus, TaskStatus } from '@handoff/domain';
+import { DEV_ACCOUNT, seedIds, uuidv5 } from './ids';
 import { createScriptPool, redact, requireDatabaseUrl } from './pool';
 
 // =============================================================================
 // Deterministic ids
 // =============================================================================
 
-/**
- * Fixed namespace for this project's seed data. Any UUID works as long as it
- * never changes: change it and every seeded id changes with it.
- */
-const SEED_NAMESPACE = '6f9619ff-8b86-d011-b42d-00c04fc964ff';
-
-/**
- * RFC 4122 UUID v5 (SHA-1, name-based).
- *
- * Implemented here rather than pulled in as a dependency: it is a dozen lines,
- * and the seed should not acquire a runtime dependency for it.
- */
-export function uuidv5(name: string, namespace: string = SEED_NAMESPACE): string {
-  const ns = Buffer.from(namespace.replace(/-/g, ''), 'hex');
-  if (ns.length !== 16) throw new Error(`Invalid UUID namespace: ${namespace}`);
-
-  const hash = createHash('sha1')
-    .update(Buffer.concat([ns, Buffer.from(name, 'utf8')]))
-    .digest();
-
-  const bytes = Buffer.from(hash.subarray(0, 16));
-  bytes[6] = (bytes[6]! & 0x0f) | 0x50; // version 5
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80; // RFC 4122 variant
-
-  const hex = bytes.toString('hex');
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    hex.slice(12, 16),
-    hex.slice(16, 20),
-    hex.slice(20),
-  ].join('-');
-}
-
-const id = {
-  user: (slug: string) => uuidv5(`user:${slug}`),
-  project: (slug: string) => uuidv5(`project:${slug}`),
-  task: (slug: string) => uuidv5(`task:${slug}`),
-  event: (taskSlug: string, seq: number) => uuidv5(`event:${taskSlug}:${seq}`),
-  comment: (slug: string) => uuidv5(`comment:${slug}`),
-  handoff: (slug: string) => uuidv5(`handoff:${slug}`),
-  brief: (slug: string) => uuidv5(`brief:${slug}`),
-};
+// Identifiers come from ./ids so that dev-login and the seed cannot disagree
+// about which row the development account is.
+const id = seedIds;
 
 // =============================================================================
 // Fixture data
@@ -79,15 +39,22 @@ const DAY = 24 * HOUR;
 const at = (hours: number): string => new Date(T0 + hours * HOUR).toISOString();
 const days = (n: number): string => new Date(T0 + n * DAY).toISOString();
 
+/**
+ * Fixture users.
+ *
+ * The first is the account `POST /auth/dev-login` issues tokens for, so that
+ * signing in during development lands on an account that owns real data rather
+ * than an empty one.
+ */
 const USERS = [
-  { slug: 'alice', email: 'alice@example.com', displayName: 'Alice Nakamura' },
+  { slug: DEV_ACCOUNT.slug, email: DEV_ACCOUNT.email, displayName: DEV_ACCOUNT.displayName },
   { slug: 'bob', email: 'bob@example.com', displayName: 'Bob Osei' },
   { slug: 'charlie', email: 'charlie@example.com', displayName: 'Charlie Duval' },
 ] as const;
 
 const PROJECTS = [
-  { slug: 'billing', name: 'Billing platform', owner: 'alice' },
-  { slug: 'onboarding', name: 'Customer onboarding', owner: 'alice' },
+  { slug: 'billing', name: 'Billing platform', owner: DEV_ACCOUNT.slug },
+  { slug: 'onboarding', name: 'Customer onboarding', owner: DEV_ACCOUNT.slug },
 ] as const;
 
 type EventSpec = {
@@ -121,13 +88,13 @@ const TASKS: TaskSpec[] = [
     project: 'billing',
     title: 'Migrate billing to the new payment gateway',
     status: TaskStatus.BLOCKED,
-    owner: 'alice',
+    owner: DEV_ACCOUNT.slug,
     dueDays: 14,
     events: [
-      { type: EventType.TaskCreated, actor: 'alice', hour: 0, payload: { title: 'Migrate billing to the new payment gateway', projectId: '@project:billing' } },
-      { type: EventType.TaskAssigned, actor: 'alice', hour: 1, payload: { fromOwnerId: null, toOwnerId: '@user:alice' } },
-      { type: EventType.TaskStarted, actor: 'alice', hour: 2, payload: { ownerId: '@user:alice' } },
-      { type: EventType.TaskBlocked, actor: 'alice', hour: 26, payload: { reason: 'Waiting on vendor sandbox credentials.' } },
+      { type: EventType.TaskCreated, actor: DEV_ACCOUNT.slug, hour: 0, payload: { title: 'Migrate billing to the new payment gateway', projectId: '@project:billing' } },
+      { type: EventType.TaskAssigned, actor: DEV_ACCOUNT.slug, hour: 1, payload: { fromOwnerId: null, toOwnerId: '@user:ata' } },
+      { type: EventType.TaskStarted, actor: DEV_ACCOUNT.slug, hour: 2, payload: { ownerId: '@user:ata' } },
+      { type: EventType.TaskBlocked, actor: DEV_ACCOUNT.slug, hour: 26, payload: { reason: 'Waiting on vendor sandbox credentials.' } },
     ],
   },
   {
@@ -138,8 +105,8 @@ const TASKS: TaskSpec[] = [
     owner: 'bob',
     dueDays: 21,
     events: [
-      { type: EventType.TaskCreated, actor: 'alice', hour: 3, payload: { title: 'Support partial refunds', projectId: '@project:billing' } },
-      { type: EventType.TaskAssigned, actor: 'alice', hour: 4, payload: { fromOwnerId: null, toOwnerId: '@user:bob' } },
+      { type: EventType.TaskCreated, actor: DEV_ACCOUNT.slug, hour: 3, payload: { title: 'Support partial refunds', projectId: '@project:billing' } },
+      { type: EventType.TaskAssigned, actor: DEV_ACCOUNT.slug, hour: 4, payload: { fromOwnerId: null, toOwnerId: '@user:bob' } },
       { type: EventType.TaskStarted, actor: 'bob', hour: 6, payload: { ownerId: '@user:bob' } },
     ],
   },
@@ -151,8 +118,8 @@ const TASKS: TaskSpec[] = [
     owner: 'bob',
     dueDays: null,
     events: [
-      { type: EventType.TaskCreated, actor: 'alice', hour: 5, payload: { title: 'Generate monthly invoice PDFs', projectId: '@project:billing' } },
-      { type: EventType.TaskAssigned, actor: 'alice', hour: 5, payload: { fromOwnerId: null, toOwnerId: '@user:bob' } },
+      { type: EventType.TaskCreated, actor: DEV_ACCOUNT.slug, hour: 5, payload: { title: 'Generate monthly invoice PDFs', projectId: '@project:billing' } },
+      { type: EventType.TaskAssigned, actor: DEV_ACCOUNT.slug, hour: 5, payload: { fromOwnerId: null, toOwnerId: '@user:bob' } },
       { type: EventType.TaskStarted, actor: 'bob', hour: 7, payload: { ownerId: '@user:bob' } },
       { type: EventType.TaskCompleted, actor: 'bob', hour: 30, payload: { note: 'Shipped behind a feature flag.' } },
     ],
@@ -165,7 +132,7 @@ const TASKS: TaskSpec[] = [
     owner: null,
     dueDays: null,
     events: [
-      { type: EventType.TaskCreated, actor: 'alice', hour: 8, payload: { title: 'Dunning emails for failed charges', projectId: '@project:billing' } },
+      { type: EventType.TaskCreated, actor: DEV_ACCOUNT.slug, hour: 8, payload: { title: 'Dunning emails for failed charges', projectId: '@project:billing' } },
     ],
   },
   {
@@ -176,8 +143,8 @@ const TASKS: TaskSpec[] = [
     owner: 'charlie',
     dueDays: 30,
     events: [
-      { type: EventType.TaskCreated, actor: 'alice', hour: 9, payload: { title: 'EU VAT calculation', projectId: '@project:billing' } },
-      { type: EventType.TaskAssigned, actor: 'alice', hour: 10, payload: { fromOwnerId: null, toOwnerId: '@user:charlie' } },
+      { type: EventType.TaskCreated, actor: DEV_ACCOUNT.slug, hour: 9, payload: { title: 'EU VAT calculation', projectId: '@project:billing' } },
+      { type: EventType.TaskAssigned, actor: DEV_ACCOUNT.slug, hour: 10, payload: { fromOwnerId: null, toOwnerId: '@user:charlie' } },
     ],
   },
   {
@@ -185,13 +152,13 @@ const TASKS: TaskSpec[] = [
     project: 'billing',
     title: 'Audit log for billing changes',
     status: TaskStatus.TRANSFERRED,
-    owner: 'alice',
+    owner: DEV_ACCOUNT.slug,
     dueDays: 10,
     events: [
-      { type: EventType.TaskCreated, actor: 'alice', hour: 11, payload: { title: 'Audit log for billing changes', projectId: '@project:billing' } },
-      { type: EventType.TaskAssigned, actor: 'alice', hour: 11, payload: { fromOwnerId: null, toOwnerId: '@user:alice' } },
-      { type: EventType.TaskStarted, actor: 'alice', hour: 12, payload: { ownerId: '@user:alice' } },
-      { type: EventType.TaskTransferred, actor: 'alice', hour: 33, payload: { handoffId: '@handoff:audit-pending', fromUserId: '@user:alice', toUserId: '@user:bob', reason: 'Heading on leave; you have the most context on the audit trail.' } },
+      { type: EventType.TaskCreated, actor: DEV_ACCOUNT.slug, hour: 11, payload: { title: 'Audit log for billing changes', projectId: '@project:billing' } },
+      { type: EventType.TaskAssigned, actor: DEV_ACCOUNT.slug, hour: 11, payload: { fromOwnerId: null, toOwnerId: '@user:ata' } },
+      { type: EventType.TaskStarted, actor: DEV_ACCOUNT.slug, hour: 12, payload: { ownerId: '@user:ata' } },
+      { type: EventType.TaskTransferred, actor: DEV_ACCOUNT.slug, hour: 33, payload: { handoffId: '@handoff:audit-pending', fromUserId: '@user:ata', toUserId: '@user:bob', reason: 'Heading on leave; you have the most context on the audit trail.' } },
     ],
   },
   {
@@ -202,8 +169,8 @@ const TASKS: TaskSpec[] = [
     owner: 'charlie',
     dueDays: 7,
     events: [
-      { type: EventType.TaskCreated, actor: 'alice', hour: 13, payload: { title: 'Rebuild the signup wizard', projectId: '@project:onboarding' } },
-      { type: EventType.TaskAssigned, actor: 'alice', hour: 13, payload: { fromOwnerId: null, toOwnerId: '@user:charlie' } },
+      { type: EventType.TaskCreated, actor: DEV_ACCOUNT.slug, hour: 13, payload: { title: 'Rebuild the signup wizard', projectId: '@project:onboarding' } },
+      { type: EventType.TaskAssigned, actor: DEV_ACCOUNT.slug, hour: 13, payload: { fromOwnerId: null, toOwnerId: '@user:charlie' } },
       { type: EventType.TaskStarted, actor: 'charlie', hour: 14, payload: { ownerId: '@user:charlie' } },
       { type: EventType.TaskBlocked, actor: 'charlie', hour: 18, payload: { reason: 'Design tokens not finalized.' } },
       { type: EventType.TaskUnblocked, actor: 'charlie', hour: 34, payload: { resolution: 'Design signed off the tokens.', resumedStatus: TaskStatus.IN_PROGRESS } },
@@ -217,8 +184,8 @@ const TASKS: TaskSpec[] = [
     owner: 'bob',
     dueDays: 3,
     events: [
-      { type: EventType.TaskCreated, actor: 'alice', hour: 15, payload: { title: 'Welcome email sequence', projectId: '@project:onboarding' } },
-      { type: EventType.TaskAssigned, actor: 'alice', hour: 16, payload: { fromOwnerId: null, toOwnerId: '@user:charlie' } },
+      { type: EventType.TaskCreated, actor: DEV_ACCOUNT.slug, hour: 15, payload: { title: 'Welcome email sequence', projectId: '@project:onboarding' } },
+      { type: EventType.TaskAssigned, actor: DEV_ACCOUNT.slug, hour: 16, payload: { fromOwnerId: null, toOwnerId: '@user:charlie' } },
       { type: EventType.TaskTransferred, actor: 'charlie', hour: 20, payload: { handoffId: '@handoff:emails-accepted', fromUserId: '@user:charlie', toUserId: '@user:bob', reason: 'You own the messaging templates.' } },
       { type: EventType.TaskAssigned, actor: 'bob', hour: 21, payload: { fromOwnerId: '@user:charlie', toOwnerId: '@user:bob' } },
     ],
@@ -231,8 +198,8 @@ const TASKS: TaskSpec[] = [
     owner: null,
     dueDays: null,
     events: [
-      { type: EventType.TaskCreated, actor: 'alice', hour: 17, payload: { title: 'CSV contact import', projectId: '@project:onboarding' } },
-      { type: EventType.TaskAssigned, actor: 'alice', hour: 18, payload: { fromOwnerId: null, toOwnerId: '@user:bob' } },
+      { type: EventType.TaskCreated, actor: DEV_ACCOUNT.slug, hour: 17, payload: { title: 'CSV contact import', projectId: '@project:onboarding' } },
+      { type: EventType.TaskAssigned, actor: DEV_ACCOUNT.slug, hour: 18, payload: { fromOwnerId: null, toOwnerId: '@user:bob' } },
       { type: EventType.TaskUnassigned, actor: 'bob', hour: 19, payload: { previousOwnerId: '@user:bob', reason: 'Deprioritized this sprint.' } },
     ],
   },
@@ -241,21 +208,21 @@ const TASKS: TaskSpec[] = [
     project: 'onboarding',
     title: 'In-app setup checklist',
     status: TaskStatus.BLOCKED,
-    owner: 'alice',
+    owner: DEV_ACCOUNT.slug,
     dueDays: 5,
     events: [
-      { type: EventType.TaskCreated, actor: 'alice', hour: 22, payload: { title: 'In-app setup checklist', projectId: '@project:onboarding' } },
-      { type: EventType.TaskAssigned, actor: 'alice', hour: 22, payload: { fromOwnerId: null, toOwnerId: '@user:alice' } },
-      { type: EventType.TaskStarted, actor: 'alice', hour: 23, payload: { ownerId: '@user:alice' } },
-      { type: EventType.TaskBlocked, actor: 'alice', hour: 35, payload: { reason: 'Blocked on the analytics events shipping first.' } },
+      { type: EventType.TaskCreated, actor: DEV_ACCOUNT.slug, hour: 22, payload: { title: 'In-app setup checklist', projectId: '@project:onboarding' } },
+      { type: EventType.TaskAssigned, actor: DEV_ACCOUNT.slug, hour: 22, payload: { fromOwnerId: null, toOwnerId: '@user:ata' } },
+      { type: EventType.TaskStarted, actor: DEV_ACCOUNT.slug, hour: 23, payload: { ownerId: '@user:ata' } },
+      { type: EventType.TaskBlocked, actor: DEV_ACCOUNT.slug, hour: 35, payload: { reason: 'Blocked on the analytics events shipping first.' } },
     ],
   },
 ];
 
 const COMMENTS = [
   { slug: 'c1', task: 'billing-gateway', author: 'bob', hour: 27, body: 'Vendor says the sandbox should be up Monday.' },
-  { slug: 'c2', task: 'billing-gateway', author: 'alice', hour: 28, body: 'Thanks — I will pick it back up as soon as it is.' },
-  { slug: 'c3', task: 'onboarding-wizard', author: 'alice', hour: 19, body: 'Design tokens are in Figma now.' },
+  { slug: 'c2', task: 'billing-gateway', author: DEV_ACCOUNT.slug, hour: 28, body: 'Thanks — I will pick it back up as soon as it is.' },
+  { slug: 'c3', task: 'onboarding-wizard', author: DEV_ACCOUNT.slug, hour: 19, body: 'Design tokens are in Figma now.' },
   { slug: 'c4', task: 'billing-refunds', author: 'charlie', hour: 8, body: 'Watch out for currency rounding on partial amounts.' },
   { slug: 'c5', task: 'onboarding-emails', author: 'bob', hour: 22, body: 'Taking this on — templates are mostly ready.' },
 ] as const;
@@ -264,7 +231,7 @@ const HANDOFFS = [
   {
     slug: 'audit-pending',
     task: 'billing-audit',
-    from: 'alice',
+    from: DEV_ACCOUNT.slug,
     to: 'bob',
     reason: 'Heading on leave; you have the most context on the audit trail.',
     status: HandoffStatus.PENDING,
@@ -310,7 +277,7 @@ const BRIEFS = [
 // Seeding
 // =============================================================================
 
-/** Resolve `@user:alice` / `@project:billing` / `@handoff:x` placeholders. */
+/** Resolve `@user:ata` / `@project:billing` / `@handoff:x` placeholders. */
 function resolveRefs(value: unknown): unknown {
   if (typeof value === 'string' && value.startsWith('@')) {
     const [kind, slug] = value.slice(1).split(':');
@@ -369,7 +336,7 @@ export async function seed(options: SeedOptions = {}): Promise<SeedResult> {
     await client.query('COMMIT');
 
     log.log('[seed] inserted ' + Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', '));
-    log.log(`[seed] alice = ${id.user('alice')}`);
+    log.log(`[seed] ${DEV_ACCOUNT.displayName} = ${id.user(DEV_ACCOUNT.slug)}`);
     log.log(`[seed] billing project = ${id.project('billing')}`);
     return { seeded: true, counts };
   } catch (err) {
@@ -516,7 +483,7 @@ async function insertAll(client: PoolClient): Promise<Record<string, number>> {
 }
 
 /** Exposed so tests and tooling can reference the fixtures by name. */
-export const seedIds = id;
+export { seedIds, uuidv5 };
 export const seedFixtures = { USERS, PROJECTS, TASKS, COMMENTS, HANDOFFS, BRIEFS };
 
 // =============================================================================
