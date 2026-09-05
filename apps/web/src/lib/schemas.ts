@@ -158,10 +158,12 @@ const _eventShape = null as unknown as TaskEventDto satisfies TaskEvent;
 // --- handoffs ----------------------------------------------------------------
 
 export const handoffBriefContentSchema = z.object({
-  summary: z.string(),
-  keyContext: z.array(z.string()),
-  openQuestions: z.array(z.string()),
+  objective: z.string(),
+  whatHappened: z.string(),
+  decisions: z.array(z.string()),
   blockers: z.array(z.string()),
+  remainingWork: z.string(),
+  suggestedNextAction: z.string(),
   confidence: z.number().optional(),
 });
 

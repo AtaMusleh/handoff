@@ -169,16 +169,26 @@ export interface HandoffBrief {
   createdAt: ISODateTime;
 }
 
-/** Structured body of a {@link HandoffBrief}; stored as JSONB. */
+/**
+ * Structured body of a {@link HandoffBrief}; stored as JSONB.
+ *
+ * These fields are what the generator is contractually required to produce and
+ * what the UI renders section by section, so the names are deliberately the
+ * questions a new owner actually asks rather than generic summary fields.
+ */
 export interface HandoffBriefContent {
-  /** One-paragraph orientation for the incoming owner. */
-  summary: string;
-  /** Decisions and constraints the recipient needs in order to continue. */
-  keyContext: string[];
-  /** Concrete next steps. */
-  openQuestions: string[];
-  /** Anything currently blocking progress. */
+  /** The task's current goal, in the receiver's terms. */
+  objective: string;
+  /** What has happened so far: changes, progress, context. */
+  whatHappened: string;
+  /** Key decisions already made, which the receiver should not relitigate. */
+  decisions: string[];
+  /** Anything currently blocking progress, or a risk worth knowing about. */
   blockers: string[];
+  /** What still needs to happen. */
+  remainingWork: string;
+  /** The single first thing the receiver should do. */
+  suggestedNextAction: string;
   /** Model-reported confidence in the brief, 0..1. */
   confidence?: number;
 }

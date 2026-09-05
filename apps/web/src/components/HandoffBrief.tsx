@@ -28,27 +28,20 @@ export interface BriefSections {
 }
 
 /**
- * Turn an AI brief into display sections.
+ * Turn a stored brief into display sections.
  *
- * `HandoffBriefContent` stores `summary` / `keyContext` / `openQuestions` /
- * `blockers`; the richer shape the UI wants is mapped from those, with the
- * event stream filling the gaps the stored content does not cover.
+ * The worker now writes exactly these fields, so this is a straight read rather
+ * than a reshaping. `whatHappened` and `remainingWork` are single strings in
+ * storage and lists here, so they are wrapped.
  */
-export function toSections(
-  brief: HandoffBriefDto,
-  task: TaskResponse,
-  events: TaskEventDto[],
-): BriefSections {
-  const derived = buildFallbackBrief(task, events);
+export function toSections(brief: HandoffBriefDto): BriefSections {
   return {
-    objective: brief.content.summary || derived.objective,
-    whatHappened: derived.whatHappened,
-    decisions: brief.content.keyContext.length ? brief.content.keyContext : derived.decisions,
-    blockers: brief.content.blockers.length ? brief.content.blockers : derived.blockers,
-    remainingWork: brief.content.openQuestions.length
-      ? brief.content.openQuestions
-      : derived.remainingWork,
-    suggestedNextAction: derived.suggestedNextAction,
+    objective: brief.content.objective,
+    whatHappened: [brief.content.whatHappened],
+    decisions: brief.content.decisions,
+    blockers: brief.content.blockers,
+    remainingWork: [brief.content.remainingWork],
+    suggestedNextAction: brief.content.suggestedNextAction,
     source: 'ai',
     model: brief.model,
     confidence: brief.content.confidence,
@@ -185,7 +178,7 @@ export function HandoffBrief({
   compact?: boolean;
 }) {
   const sections = useMemo(
-    () => (brief ? toSections(brief, task, events) : buildFallbackBrief(task, events)),
+    () => (brief ? toSections(brief) : buildFallbackBrief(task, events)),
     [brief, task, events],
   );
 

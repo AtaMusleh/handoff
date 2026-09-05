@@ -1,0 +1,22 @@
+{
+  "name": "@handoff/worker-handoff-brief",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
+    "@handoff/domain": "1.0.0",
+    "bull": "^4.16.5",
+    "ioredis": "^6.0.0",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/bull": "^3.15.9",
+    "@types/pg": "^8.23.1"
+  },
+  "scripts": {
+    "dev": "node --experimental-strip-types src/index.ts",
+    "typecheck": "tsc --noEmit"
+  }
+}
