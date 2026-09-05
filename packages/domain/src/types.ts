@@ -60,10 +60,23 @@ export enum TaskStatus {
 export enum EventType {
   TaskCreated = 'TaskCreated',
   TaskAssigned = 'TaskAssigned',
+  TaskStarted = 'TaskStarted',
+  TaskUnassigned = 'TaskUnassigned',
   TaskBlocked = 'TaskBlocked',
   TaskTransferred = 'TaskTransferred',
   TaskCompleted = 'TaskCompleted',
   TaskUnblocked = 'TaskUnblocked',
+  TaskReopened = 'TaskReopened',
+}
+
+/**
+ * Lifecycle of a {@link Handoff}. A handoff is proposed, then accepted or
+ * declined by the recipient; only acceptance moves task ownership.
+ */
+export enum HandoffStatus {
+  PENDING = 'PENDING',
+  ACCEPTED = 'ACCEPTED',
+  DECLINED = 'DECLINED',
 }
 
 /** Statuses from which no further transition is possible. */
@@ -129,6 +142,10 @@ export interface Handoff {
   toUserId: UUID;
   /** Free-text rationale supplied by the sender. */
   reason: string | null;
+  /** Proposal lifecycle. Task ownership moves only on ACCEPTED. */
+  status: HandoffStatus;
+  /** When the recipient accepted or declined; null while PENDING. */
+  resolvedAt: ISODateTime | null;
   createdAt: ISODateTime;
 }
 
@@ -191,6 +208,25 @@ export interface TaskAssignedPayload {
   toOwnerId: UUID;
 }
 
+export interface TaskStartedPayload {
+  /** Owner who picked the task up. */
+  ownerId: UUID;
+}
+
+export interface TaskUnassignedPayload {
+  /** Owner the task is being taken away from. */
+  previousOwnerId: UUID;
+  /** Why the task went back to the backlog. */
+  reason?: string;
+}
+
+export interface TaskReopenedPayload {
+  /** Why the completed task is being reopened. Required — reopening is rare. */
+  reason: string;
+  /** Owner picking the work back up; defaults to the completing owner. */
+  ownerId: UUID;
+}
+
 export interface TaskBlockedPayload {
   reason: string;
   /** Other tasks this one is waiting on, when the blocker is internal. */
@@ -221,10 +257,13 @@ export interface TaskCompletedPayload {
 export interface TaskEventPayloadMap {
   [EventType.TaskCreated]: TaskCreatedPayload;
   [EventType.TaskAssigned]: TaskAssignedPayload;
+  [EventType.TaskStarted]: TaskStartedPayload;
+  [EventType.TaskUnassigned]: TaskUnassignedPayload;
   [EventType.TaskBlocked]: TaskBlockedPayload;
   [EventType.TaskUnblocked]: TaskUnblockedPayload;
   [EventType.TaskTransferred]: TaskTransferredPayload;
   [EventType.TaskCompleted]: TaskCompletedPayload;
+  [EventType.TaskReopened]: TaskReopenedPayload;
 }
 
 export type TaskEventPayload = TaskEventPayloadMap[EventType];
@@ -258,19 +297,25 @@ export interface TaskEventOf<T extends EventType> {
 
 export type TaskCreatedEvent = TaskEventOf<EventType.TaskCreated>;
 export type TaskAssignedEvent = TaskEventOf<EventType.TaskAssigned>;
+export type TaskStartedEvent = TaskEventOf<EventType.TaskStarted>;
+export type TaskUnassignedEvent = TaskEventOf<EventType.TaskUnassigned>;
 export type TaskBlockedEvent = TaskEventOf<EventType.TaskBlocked>;
 export type TaskUnblockedEvent = TaskEventOf<EventType.TaskUnblocked>;
 export type TaskTransferredEvent = TaskEventOf<EventType.TaskTransferred>;
 export type TaskCompletedEvent = TaskEventOf<EventType.TaskCompleted>;
+export type TaskReopenedEvent = TaskEventOf<EventType.TaskReopened>;
 
 /** Discriminated union of every event in the stream. */
 export type TaskEvent =
   | TaskCreatedEvent
   | TaskAssignedEvent
+  | TaskStartedEvent
+  | TaskUnassignedEvent
   | TaskBlockedEvent
   | TaskUnblockedEvent
   | TaskTransferredEvent
-  | TaskCompletedEvent;
+  | TaskCompletedEvent
+  | TaskReopenedEvent;
 
 /**
  * An event before it has been persisted: no id, no sequence, no timestamp —
@@ -288,6 +333,13 @@ export function isTaskStatus(value: unknown): value is TaskStatus {
   return (
     typeof value === 'string' &&
     (Object.values(TaskStatus) as string[]).includes(value)
+  );
+}
+
+export function isHandoffStatus(value: unknown): value is HandoffStatus {
+  return (
+    typeof value === 'string' &&
+    (Object.values(HandoffStatus) as string[]).includes(value)
   );
 }
 

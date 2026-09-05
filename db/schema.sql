@@ -145,10 +145,13 @@ CREATE TABLE task_events (
     CONSTRAINT task_events_type_valid CHECK (type IN (
         'TaskCreated',
         'TaskAssigned',
+        'TaskStarted',
+        'TaskUnassigned',
         'TaskBlocked',
         'TaskTransferred',
         'TaskCompleted',
-        'TaskUnblocked'
+        'TaskUnblocked',
+        'TaskReopened'
     ))
 );
 
@@ -211,6 +214,8 @@ CREATE TABLE handoffs (
     from_user_id UUID,
     to_user_id   UUID NOT NULL,
     reason       TEXT,
+    status       VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+    resolved_at  TIMESTAMP WITH TIME ZONE,
     created_at   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
 
     CONSTRAINT handoffs_task_id_fkey
@@ -225,6 +230,16 @@ CREATE TABLE handoffs (
 
     CONSTRAINT handoffs_distinct_parties CHECK (
         from_user_id IS NULL OR from_user_id <> to_user_id
+    ),
+    CONSTRAINT handoffs_status_valid CHECK (status IN (
+        'PENDING',
+        'ACCEPTED',
+        'DECLINED'
+    )),
+    -- resolved_at is set exactly when the proposal leaves PENDING.
+    CONSTRAINT handoffs_resolved_at_matches_status CHECK (
+        (status = 'PENDING' AND resolved_at IS NULL)
+        OR (status <> 'PENDING' AND resolved_at IS NOT NULL)
     )
 );
 
@@ -236,6 +251,14 @@ CREATE INDEX handoffs_created_at_idx   ON handoffs (created_at DESC);
 CREATE INDEX handoffs_task_id_created_at_idx ON handoffs (task_id, created_at DESC);
 -- Recipient inbox.
 CREATE INDEX handoffs_to_user_id_created_at_idx ON handoffs (to_user_id, created_at DESC);
+-- Unanswered proposals awaiting a given recipient - the inbox badge query.
+CREATE INDEX handoffs_pending_to_user_id_idx
+    ON handoffs (to_user_id, created_at DESC)
+    WHERE status = 'PENDING';
+-- At most one open proposal per task; declining or accepting frees the slot.
+CREATE UNIQUE INDEX handoffs_one_pending_per_task_idx
+    ON handoffs (task_id)
+    WHERE status = 'PENDING';
 
 COMMENT ON COLUMN handoffs.from_user_id IS 'NULL when the task was previously unowned (claimed from backlog).';
 
