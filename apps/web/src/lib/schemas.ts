@@ -59,6 +59,7 @@ export const taskSchema = z.object({
   title: z.string(),
   status: z.enum(TaskStatus),
   ownerId: uuid.nullable(),
+  dueDate: iso.nullable(),
   version: z.number().int(),
   createdAt: iso,
 });
@@ -94,6 +95,7 @@ export const taskEventSchema = z.discriminatedUnion('type', [
       title: z.string(),
       projectId: uuid,
       ownerId: uuid.optional(),
+      dueDate: iso.nullish(),
     }),
   }),
   z.object({

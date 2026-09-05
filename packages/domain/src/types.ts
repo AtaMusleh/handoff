@@ -124,6 +124,14 @@ export interface Task {
   /** Null only while the task is in {@link TaskStatus.BACKLOG}. */
   ownerId: UUID | null;
   /**
+   * When the task is due, or null if it has no deadline.
+   *
+   * Stored as `timestamptz`, so it carries a point in time rather than a
+   * calendar date: "end of Tuesday" means different instants in different
+   * offices, and the API should not have to guess which one was meant.
+   */
+  dueDate: ISODateTime | null;
+  /**
    * Optimistic-concurrency token. Incremented on every state mutation; a
    * conditional UPDATE matching zero rows means a concurrent writer won.
    */
@@ -212,6 +220,14 @@ export interface TaskCreatedPayload {
   projectId: UUID;
   /** Present when the task was created pre-assigned rather than in backlog. */
   ownerId?: UUID;
+  /**
+   * Deadline set at creation.
+   *
+   * Carried in the event rather than living only on the projection, so
+   * `replayEvents` can rebuild the task exactly. Changing a due date after
+   * creation would need its own event type for the same reason.
+   */
+  dueDate?: ISODateTime | null;
 }
 
 export interface TaskAssignedPayload {

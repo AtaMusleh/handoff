@@ -365,6 +365,7 @@ interface TaskRow {
   title: string;
   status: string;
   owner_id: string | null;
+  due_date: Date | string | null;
   version: number | string;
   created_at: Date | string;
 }
@@ -430,6 +431,7 @@ function mapTask(row: TaskRow): Task {
     title: row.title,
     status: row.status,
     ownerId: row.owner_id,
+    dueDate: toISOOrNull(row.due_date),
     version: toInt(row.version),
     createdAt: toISO(row.created_at),
   };
@@ -474,7 +476,8 @@ function mapHandoff(row: HandoffRow): Handoff {
   };
 }
 
-const TASK_COLUMNS = 'id, project_id, title, status, owner_id, version, created_at';
+const TASK_COLUMNS =
+  'id, project_id, title, status, owner_id, due_date, version, created_at';
 const EVENT_COLUMNS = 'id, task_id, type, actor_id, payload, sequence, created_at';
 const HANDOFF_COLUMNS =
   'id, task_id, from_user_id, to_user_id, reason, status, resolution_note, resolved_at, created_at';
@@ -523,6 +526,7 @@ export function replayEvents(events: readonly TaskEvent[]): Task {
     title: first.payload.title,
     status: first.payload.ownerId ? TaskStatus.ASSIGNED : TaskStatus.BACKLOG,
     ownerId: first.payload.ownerId ?? null,
+    dueDate: first.payload.dueDate ?? null,
     version: 0,
     createdAt: first.createdAt,
   };
@@ -962,9 +966,19 @@ export class TaskRepository {
     const t = aggregate.state;
     try {
       await client.query(
-        `INSERT INTO tasks (id, project_id, title, status, owner_id, version, created_at)
-         VALUES ($1::uuid, $2::uuid, $3, $4, $5::uuid, $6, $7::timestamptz)`,
-        [t.id, t.projectId, t.title, t.status, t.ownerId, t.version, t.createdAt],
+        `INSERT INTO tasks
+             (id, project_id, title, status, owner_id, due_date, version, created_at)
+         VALUES ($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::timestamptz, $7, $8::timestamptz)`,
+        [
+          t.id,
+          t.projectId,
+          t.title,
+          t.status,
+          t.ownerId,
+          t.dueDate,
+          t.version,
+          t.createdAt,
+        ],
       );
     } catch (err) {
       if (pgCode(err) === PG.UNIQUE_VIOLATION) {
@@ -981,10 +995,19 @@ export class TaskRepository {
     try {
       result = await client.query<TaskRow>(
         `UPDATE tasks
-            SET title = $2, status = $3, owner_id = $4::uuid, version = $5
-          WHERE id = $1::uuid AND version = $6
+            SET title = $2, status = $3, owner_id = $4::uuid,
+                due_date = $5::timestamptz, version = $6
+          WHERE id = $1::uuid AND version = $7
         RETURNING ${TASK_COLUMNS}`,
-        [t.id, t.title, t.status, t.ownerId, t.version, aggregate.baseVersion],
+        [
+          t.id,
+          t.title,
+          t.status,
+          t.ownerId,
+          t.dueDate,
+          t.version,
+          aggregate.baseVersion,
+        ],
       );
     } catch (err) {
       translatePgError(err, { entity: 'Task', id: t.id });

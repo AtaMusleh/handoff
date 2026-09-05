@@ -456,6 +456,8 @@ export interface CreateTaskOptions {
   ownerId?: UUID | null;
   /** Who created the task; recorded as the event actor. */
   actorId?: UUID | null;
+  /** Optional deadline. */
+  dueDate?: ISODateTime | null;
   /** Overrides `now()`; useful for deterministic tests and backfills. */
   createdAt?: ISODateTime;
 }
@@ -513,6 +515,7 @@ export class TaskAggregate {
       title: cleanTitle,
       status: ownerId ? TaskStatus.ASSIGNED : TaskStatus.BACKLOG,
       ownerId,
+      dueDate: options.dueDate ?? null,
       version: 0,
       createdAt,
     };
@@ -525,6 +528,7 @@ export class TaskAggregate {
         title: cleanTitle,
         projectId,
         ...(ownerId ? { ownerId } : {}),
+        ...(options.dueDate ? { dueDate: options.dueDate } : {}),
       },
     };
 

@@ -63,6 +63,8 @@ export const createTaskSchema = z.object({
     .max(500, 'Title must be at most 500 characters.'),
   projectId: uuid,
   ownerId: uuid.optional(),
+  /** ISO-8601 instant. Null or omitted means no deadline. */
+  dueDate: z.iso.datetime({ offset: true }).nullish(),
 });
 
 export const blockTaskSchema = z.object({
@@ -159,6 +161,7 @@ export class TaskRouter {
 
     const aggregate = TaskAggregate.create(body.title, body.projectId, {
       ownerId: body.ownerId ?? null,
+      dueDate: body.dueDate ?? null,
       actorId: actor.userId,
     });
 
