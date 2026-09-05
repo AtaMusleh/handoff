@@ -13,12 +13,13 @@
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^26.4.1",
-    "socket.io-client": "^4.7.2"
+    "socket.io-client": "^4.7.2",
+    "tsx": "^4.23.13"
   },
   "scripts": {
-    "db:migrate": "node --experimental-strip-types --env-file-if-exists=../../.env src/db/migrate.ts",
-    "db:seed": "node --experimental-strip-types --env-file-if-exists=../../.env src/db/seed.ts",
-    "db:reset": "node --experimental-strip-types --env-file-if-exists=../../.env src/db/reset.ts",
+    "db:migrate": "tsx --env-file=../../.env src/db/migrate.ts",
+    "db:seed": "tsx --env-file=../../.env src/db/seed.ts",
+    "db:reset": "tsx --env-file=../../.env src/db/reset.ts",
     "typecheck": "tsc --noEmit -p ../../tsconfig.json"
   }
 }
